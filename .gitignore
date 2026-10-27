@@ -1,0 +1,27 @@
+# 构建产物
+build/
+build-*/
+*.obj
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.log
+
+# 原版参考二进制/配置（仅本地参考，不入库）
+BesCom.dll
+bes.cfg
+bes_cfg_clean.txt
+bes.exe.manifest
+legacy_mfc/
+BESbuild_qtdump.txt
+build_besreg_backup.reg
+tools/forms.dfm.txt
+.tmpcmp/
+
+# 临时截图与黄金对比输出
+screenshot.png
+toolbar_preview.png
+tools/golden/current.png

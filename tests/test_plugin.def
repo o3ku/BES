@@ -1,0 +1,6 @@
+LIBRARY test_plugin
+EXPORTS
+    RegComNum
+    RegComInfo
+    CreateInstance
+    ShowModal
