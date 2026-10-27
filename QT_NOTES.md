@@ -46,7 +46,7 @@ docs/      原版/64 位操作对比（OPERATION_COMPARISON.md）
 - **`ViewLayout` 有两个用途**：一是主窗体全局的窗口排布（`MainWindow::SetViewLayout`，对应原版
   `[form+0x498]`，见「窗口排布」），二是渲染器的行语义（`params.layout` = 横排/分组横排 时行是连续数据流）；
   排布切换时两者一起写入全部文档，取值 0..4 与原版一一对应。
-- **不等长帧**：`DocState::varFrames`，每行取对应帧的 start/len。
+- **不等长帧**：`DocState::varFrames`，每行取对应帧的 start/len。`DlgVarFrame` 打开时回填已有帧表，不按当前帧长自动铺满（否则「确定」与等长视图毫无区别）；帧表变化经 `FramesChanged` 实时预览，取消时 `MainWindow::DoVarFrame` 恢复打开前的快照。
 - **过滤**：`DocState::visibleFrames` 将行映射到原始帧号。
 - **水平偏移**：`Renderer::Layout(..., firstRow, hCellOffset, ...)`；
   `tabFollow` 开启时滚动按 `xTab`/`yTab` 吸附。
@@ -156,7 +156,7 @@ run-tests.bat
 ```
 
 - `test_core.exe`：189 断言。
-- `test_ui.exe`：440 断言（offscreen，已链接图标资源）。
+- `test_ui.exe`：452 断言（offscreen，已链接图标资源）。
 - 测试会隔离 QSettings（`BES_TEST_UI` / `BES_APP_SUFFIX`）。
 
 `test_ui` 覆盖：
@@ -180,6 +180,7 @@ run-tests.bat
 - 快速执行：临时宿主枚举选中 DLL 的构件、非构件二进制（`test_ui.exe`）报「不是局级系统构件！」且不注册任何构件、「快速执行」与「刷新」为两个独立命令；
 - 32 位构件被明确拒绝；
 - 构件端口增删与持久化；输出端口树/32 端口单选联动与真实编号；
+- 不等长帧查看：128 比特切分后行数=帧数且视图重绘、重开回填已有帧表、取消保留、扫描实时预览/取消回滚/确定保留；
 - 不等长帧前导码处理、`.bnt` 写出/读入；
 - 构件数据流处理对话框（`DlgProcess`）：空闲/运行/停止/复位/退出五态按钮可用性、进度条 0..256 映射与封顶、
   输入选择启用规则（反选/选取参数按选取模式）、数据类型表（含 255 未知）、输出端口决定输出标志/文件名可编辑、

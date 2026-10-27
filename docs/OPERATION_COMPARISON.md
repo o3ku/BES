@@ -181,6 +181,8 @@
 
 45. 构件命令 100 分派层（补齐 6.27 的「仅接口层」）：真实调用点在 `0x4154D3`，属 `TProcessForm.SetComponent`（函数 `0x414378`，入口把构件实例写入 `[form+0x364]`）。它先经 `[form+0x334]`（`ContainerPanel`）的 `vtbl+0x40` 取客户区到 `[ebp-0x23C]` 的 16 字节 `TRect`，再 `push 0x10; push &rect; push 0x64; push com; call [vtbl+0x34]`，即 `int handler(void* self, int cmd, void* arg, int argSize)`。返回 `-100` 表示构件不提供自定义视图，宿主在 `0x4155F8` 对 `ContainerPanel` 调 `SetVisible(False)`（`0x59BF38`）；其余返回值隐藏默认窗格 `[form+0x2F0]/[form+0x2F4]`，并用调用前后的矩形比较结果重排窗体（`0x59B834/0x59B858/0x59B878`）。`CreateInstance` 第 4 参数确认是 `ContainerPanel.Handle`（`0x4180C0..D0`，`TWinControl.Handle` 在 `+0x14C`），第 2 参数是临时上下文记录（`0xAC` 字节），第 1 参数是注册名 `[form+0x2EC]`。落点（只做可验证部分）：`bes::ViewRect`（4×int32，16 字节）、`kCmdSetViewRect = 100`、`kCmdNoCustomView = -100`；`ComponentHost::SendCommand()` 经 vtable 索引 13（x64 `0x68`）分派、`__try/__except` 保护；`SetViewRect()` 按原版口径给出 `hasView`；`DestroyInstance()` 补调槽 1 释放，析构函数在 `FreeLibrary` 前释放存活实例。`test_plugin` 的命令槽记录命令号/长度/矩形/次数并被 `TestPluginStats` 导出；`test_ui` +9 断言（槽 13 分派、16 字节矩形原样送达、未知命令 -100、`SetViewRect` 两方向、调用计数、销毁释放），UI 440。**仍未接**：`DlgProcess` 没有原版的 `TPanel ContainerPanel`（DFM：`Align = alBottom`、`OnResize = ContainerPanelResize`），窗口托管需要把容器 HWND 交给真实构件，仓库内没有可验证的 64 位构件，故不虚构。核心 189 / UI 440；`GOLDEN OK`。
 
+46. 不等长帧查看「确定后无变化」（用户报告）：`BesDoc::OpenFile` 按原版默认把帧长设为 64 比特（见 1），而 `DlgVarFrame` 构造时又用当前帧长自动铺满帧表，因此「确定」应用的是一张与当前等长视图完全相同的 64 比特表——真机截图逐字节相同；且再次打开对话框会用这张等长表覆盖已生效的不等长帧。落点：构造时不再自动铺满，改为空表并提示「按帧长切分或输入前导码扫描」；已有不等长帧时回填 `VariableFrameSet`（起点/默认帧长取首帧），取消保持原状；`应用/确定` 仅在帧表非空时可用；`Reload()` 发 `FramesChanged()`，`MainWindow::DoVarFrame` 在查看模式下实时预览（切分/编辑/扫描即刷新编辑器并清过滤），取消时恢复打开前的帧表、帧模型与过滤状态，确定时走同一应用路径并记录事件；扫描与确定都同时刷新文档与窗口。`test_ui` +12 断言（128 比特切分后行数=帧数、视图可见重绘、重开回填、取消保留、扫描实时预览、取消回滚、确定保留）；核心 189 / UI 452；`GOLDEN OK`。
+
 ## 7. 仍未对齐的差异（已确认，不属于未对比）
 
 | 差异 | 影响 | 处理建议 |
@@ -201,7 +203,7 @@
 ```bat
 run-tests.bat
 => 核心 189 断言 ALL PASSED
-=> UI  440 断言 UI ALL PASSED
+=> UI  452 断言 UI ALL PASSED
 
 tools\golden.bat
 => GOLDEN OK

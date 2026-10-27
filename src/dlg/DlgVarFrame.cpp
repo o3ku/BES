@@ -48,7 +48,8 @@ QString FormatPlaceholder(UniqueCodeFormat f)
 } // namespace
 
 DlgVarFrame::DlgVarFrame(QWidget* parent, const FileMap& map,
-                         const FrameModel& frame, bool processMode)
+                         const FrameModel& frame, bool processMode,
+                         const VariableFrameSet* existing)
     : QDialog(parent), m_map(&map), m_frame(frame), m_processMode(processMode)
 {
     setWindowTitle(processMode ? QStringLiteral("不等长帧处理")
@@ -137,10 +138,12 @@ DlgVarFrame::DlgVarFrame(QWidget* parent, const FileMap& map,
     auto* hLen = new QHBoxLayout;
     hLen->addWidget(new QLabel(QStringLiteral("默认帧长(比特)"), m_frameGroup));
     m_edFrameLen = new QLineEdit(m_frameGroup);
+    m_edFrameLen->setObjectName(QStringLiteral("frameLenEdit"));
     m_edFrameLen->setText(QString::number(frame.frameLen ? frame.frameLen : 64));
     m_edFrameLen->setFixedWidth(90);
     hLen->addWidget(m_edFrameLen);
     auto* btnSplit = new QPushButton(QStringLiteral("按帧长切分"), m_frameGroup);
+    btnSplit->setObjectName(QStringLiteral("splitButton"));
     hLen->addWidget(btnSplit);
     auto* btnLoadFrames = new QPushButton(QStringLiteral("读入帧表…"), m_frameGroup);
     btnLoadFrames->setObjectName(QStringLiteral("loadFramesButton"));
@@ -157,6 +160,7 @@ DlgVarFrame::DlgVarFrame(QWidget* parent, const FileMap& map,
     fv->addLayout(hLen);
 
     m_table = new QTableWidget(m_frameGroup);
+    m_table->setObjectName(QStringLiteral("frameTable"));
     m_table->setColumnCount(3);
     m_table->setHorizontalHeaderLabels({
         QStringLiteral("序号"), QStringLiteral("起始比特"), QStringLiteral("长度(比特)") });
@@ -214,8 +218,23 @@ DlgVarFrame::DlgVarFrame(QWidget* parent, const FileMap& map,
     });
 
     LoadPresets();
-    RebuildUniform(frame.frameLen ? frame.frameLen : 64);
+    // 已有不等长帧时回填帧表，取消后保持原状；否则留空，由扫描/切分生成。
+    // 不再自动按当前帧长铺满：那与主窗口默认的等长显示完全一致，确定后看不出变化。
+    if (existing && existing->Size() > 0) {
+        m_frames = *existing;
+        const VariableFrame& first = m_frames.Frames().front();
+        m_frame.startBit = first.startBit;
+        m_edFrameLen->setText(QString::number(first.length));
+        Reload();
+        m_table->selectRow(0);
+        m_info->setText(QStringLiteral("当前不等长帧：%1 帧")
+                            .arg(static_cast<qulonglong>(m_frames.Size())));
+    } else {
+        Reload();
+        m_info->setText(QStringLiteral("请按帧长切分或输入前导码扫描"));
+    }
     UpdateStartEnabled();
+    m_ready = true;
 }
 
 void DlgVarFrame::closeEvent(QCloseEvent* ev)
@@ -304,8 +323,9 @@ void DlgVarFrame::SetRunning(bool running)
     m_running = running;
     m_paramGroup->setEnabled(!running);
     m_frameGroup->setEnabled(!running);
-    m_btnApply->setEnabled(!running);
-    m_btnOk->setEnabled(!running);
+    const bool has = m_frames.Size() > 0 && !running;
+    m_btnApply->setEnabled(has);
+    m_btnOk->setEnabled(has);
     m_btnCancel->setEnabled(!running);
     m_btnStop->setEnabled(running);
     m_prog->setVisible(running);
@@ -356,6 +376,11 @@ void DlgVarFrame::Reload()
         m_table->setItem(static_cast<int>(i), 2,
                          new QTableWidgetItem(QString::number(fs[i].length)));
     }
+    const bool has = !fs.empty() && !m_running;
+    m_btnApply->setEnabled(has);
+    m_btnOk->setEnabled(has);
+    if (m_ready)
+        emit FramesChanged();
 }
 
 void DlgVarFrame::OnSplit()
@@ -729,7 +754,7 @@ void DlgVarFrame::OnApply()
 
 void DlgVarFrame::OnOk()
 {
-    if (m_running) return;
+    if (m_running || m_frames.Size() == 0) return;
     m_applied = true;
     accept();
 }

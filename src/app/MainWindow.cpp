@@ -1918,18 +1918,46 @@ void MainWindow::DoVarFrame(bool process)
 {
     BesDoc* d = ActiveDoc();
     if (!d) return;
-    DlgVarFrame dlg(this, d->Map(), d->State().frame, process);
-    if (dlg.exec() == QDialog::Accepted) {
-        DocState& st = d->State();
-        st.varFrames = dlg.Frames();
-        st.frame.bVariable = (st.varFrames.Size() > 0);
+    DocState& st = d->State();
+    DlgVarFrame dlg(this, d->Map(), st.frame, process,
+                    st.frame.bVariable ? &st.varFrames : nullptr);
+
+    // 扫描/编辑时实时预览；取消则恢复打开对话框前的状态
+    const bes::VariableFrameSet prevFrames = st.varFrames;
+    const bes::FrameModel       prevFrame  = st.frame;
+    const bool                  prevFilter = st.filterActive;
+    const std::vector<uint64_t> prevVisible = st.visibleFrames;
+    bool previewed = false;
+
+    auto applyFrames = [&](const bes::VariableFrameSet& fs) {
+        st.varFrames = fs;
+        st.frame.bVariable = (fs.Size() > 0);
         st.frame.startBit = dlg.Frame().startBit;
         st.filterActive = false;
         st.visibleFrames.clear();
+        d->UpdateAllViews();
+        UpdateAllViews();
+    };
+
+    if (!process) {
+        connect(&dlg, &DlgVarFrame::FramesChanged, this, [&]{
+            previewed = true;
+            applyFrames(dlg.Frames());
+        });
+    }
+
+    if (dlg.exec() == QDialog::Accepted) {
+        applyFrames(dlg.Frames());
         if (m_eventPane)
             m_eventPane->AddEvent({ QStringLiteral("处理"), QStringLiteral("不等长帧"),
                                     QTime::currentTime().toString(QStringLiteral("hh:mm:ss")),
                                     QStringLiteral("%1 帧").arg(static_cast<qulonglong>(st.varFrames.Size())) });
+    } else if (previewed) {
+        st.varFrames = prevFrames;
+        st.frame = prevFrame;
+        st.filterActive = prevFilter;
+        st.visibleFrames = prevVisible;
+        d->UpdateAllViews();
         UpdateAllViews();
     }
 }

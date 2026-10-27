@@ -28,6 +28,7 @@
 #include <QSplitter>
 #include <QTabWidget>
 #include <QTableWidget>
+#include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -590,6 +591,163 @@ int main(int argc, char** argv)
         DlgVarFrame dlg(&w, doc->Map(), doc->State().frame);
         dlg.show(); QApplication::processEvents(); dlg.close();
         CHECK(true, "DlgVarFrame constructs");
+    }
+    // 不等长帧查看：生成帧表后编辑器按帧重排，取消恢复原状
+    {
+        DocState& st = doc->State();
+        st.frame.frameLen = 0;
+        st.frame.bVariable = false;
+        st.frame.startBit = 0;
+        st.varFrames.Clear();
+        st.filterActive = false;
+        st.visibleFrames.clear();
+        st.params.view = ViewMode::BitBitmap;
+        w.UpdateAllViews();
+        QApplication::processEvents();
+
+        BesView* vfView = w.ActiveView();
+        const QImage beforeImg = vfView->viewport()->grab().toImage();
+
+        bool sawDialog = false;
+        bool okEnabled = false;
+        QTimer::singleShot(0, [&]{
+            auto* dlg = qobject_cast<DlgVarFrame*>(QApplication::activeModalWidget());
+            sawDialog = (dlg != nullptr);
+            if (!dlg) return;
+            auto* len = dlg->findChild<QLineEdit*>(QStringLiteral("frameLenEdit"));
+            auto* split = dlg->findChild<QPushButton*>(QStringLiteral("splitButton"));
+            if (len && split) {
+                len->setText(QStringLiteral("128"));
+                split->click();
+            }
+            for (QPushButton* b : dlg->findChildren<QPushButton*>())
+                if (b->text() == QStringLiteral("确定")) {
+                    okEnabled = b->isEnabled();
+                    b->click();
+                    return;
+                }
+            dlg->reject();
+        });
+        w.DoVarFrame(false);
+        QApplication::processEvents();
+
+        const uint64_t bits = doc->Map().SizeBits();
+        const uint64_t expectFrames = (bits + 127) / 128;
+        CHECK(sawDialog, "varframe view dialog runs modal");
+        CHECK(doc->State().varFrames.Size() == expectFrames &&
+              doc->State().frame.bVariable,
+              "varframe OK applies the generated frame table");
+        CHECK(okEnabled, "varframe OK enabled after generating frames");
+
+        Renderer r;
+        r.SetData(&doc->Map());
+        r.SetFrame(&doc->State().frame);
+        r.SetParams(doc->State().params);
+        r.SetVariableFrames(&doc->State().varFrames);
+        std::vector<Cell> cells; uint64_t rows = 0, cols = 0;
+        r.Layout(800, 400, 10, 20, 0, 0, cells, rows, cols);
+        CHECK(rows == doc->State().varFrames.Size(),
+              "varframe OK makes editor rows follow the frame table");
+
+        const QImage afterImg = vfView->viewport()->grab().toImage();
+        CHECK(!afterImg.isNull() && beforeImg != afterImg,
+              "varframe OK visibly repaints the editor");
+
+        // 再次打开：已有帧表回填；取消不改变当前状态
+        const uint64_t keptSize = doc->State().varFrames.Size();
+        const uint64_t keptStart = doc->State().varFrames.Frames().front().startBit;
+        bool seeded = false;
+        QTimer::singleShot(0, [&]{
+            auto* dlg = qobject_cast<DlgVarFrame*>(QApplication::activeModalWidget());
+            if (!dlg) return;
+            auto* table = dlg->findChild<QTableWidget*>(QStringLiteral("frameTable"));
+            seeded = table && table->rowCount() == static_cast<int>(keptSize);
+            for (QPushButton* b : dlg->findChildren<QPushButton*>())
+                if (b->text() == QStringLiteral("取消")) { b->click(); return; }
+            dlg->reject();
+        });
+        w.DoVarFrame(false);
+        QApplication::processEvents();
+        CHECK(seeded, "varframe reopen seeds the frame table");
+        CHECK(doc->State().varFrames.Size() == keptSize &&
+              doc->State().varFrames.Frames().front().startBit == keptStart &&
+              doc->State().frame.bVariable,
+              "varframe cancel keeps the applied frame table");
+
+        st.frame.bVariable = false;
+        st.varFrames.Clear();
+        st.params.view = ViewMode::BitChar;
+        w.UpdateAllViews();
+        QApplication::processEvents();
+    }
+    // 不等长帧查看：扫描实时预览，取消回滚；确定后保留
+    {
+        const QString varPath = QDir::tempPath() + QStringLiteral("/bes_varframe_live.dat");
+        {
+            QFile f(varPath);
+            CHECK(f.open(QIODevice::WriteOnly), "varframe live sample created");
+            std::vector<uint8_t> data(64, 0xAA);
+            for (int frame = 0; frame < 4; ++frame) {
+                data[static_cast<size_t>(frame) * 16] = 0xEB;
+                data[static_cast<size_t>(frame) * 16 + 1] = 0x90;
+            }
+            f.write(reinterpret_cast<const char*>(data.data()),
+                    static_cast<qint64>(data.size()));
+        }
+        BesDoc* live = w.OpenDocumentFile(varPath);
+        CHECK(live != nullptr, "varframe live sample opens");
+        if (live) {
+            live->State().frame.frameLen = 0;
+            live->State().frame.bVariable = false;
+            live->State().frame.startBit = 0;
+            live->State().varFrames.Clear();
+            w.UpdateAllViews();
+            QApplication::processEvents();
+
+            size_t preview = 0;
+            QTimer::singleShot(0, [&]{
+                auto* dlg = qobject_cast<DlgVarFrame*>(QApplication::activeModalWidget());
+                if (!dlg) return;
+                if (auto* pe = dlg->findChild<QLineEdit*>(QStringLiteral("precodeEdit")))
+                    pe->setText(QStringLiteral("EB90"));
+                QApplication::processEvents();
+                for (QPushButton* b : dlg->findChildren<QPushButton*>())
+                    if (b->text().startsWith(QStringLiteral("开始"))) { b->click(); break; }
+                QApplication::processEvents();
+                preview = live->State().varFrames.Size();
+                for (QPushButton* b : dlg->findChildren<QPushButton*>())
+                    if (b->text() == QStringLiteral("取消")) { b->click(); return; }
+                dlg->reject();
+            });
+            w.DoVarFrame(false);
+            QApplication::processEvents();
+            CHECK(preview == 4, "varframe scan previews frames in the editor");
+            CHECK(live->State().varFrames.Size() == 0 &&
+                  !live->State().frame.bVariable,
+                  "varframe cancel reverts the scan preview");
+
+            bool applied = false;
+            QTimer::singleShot(0, [&]{
+                auto* dlg = qobject_cast<DlgVarFrame*>(QApplication::activeModalWidget());
+                if (!dlg) return;
+                if (auto* pe = dlg->findChild<QLineEdit*>(QStringLiteral("precodeEdit")))
+                    pe->setText(QStringLiteral("EB90"));
+                QApplication::processEvents();
+                for (QPushButton* b : dlg->findChildren<QPushButton*>())
+                    if (b->text().startsWith(QStringLiteral("开始"))) { b->click(); break; }
+                QApplication::processEvents();
+                for (QPushButton* b : dlg->findChildren<QPushButton*>())
+                    if (b->text() == QStringLiteral("确定")) { b->click(); applied = true; return; }
+                dlg->reject();
+            });
+            w.DoVarFrame(false);
+            QApplication::processEvents();
+            CHECK(applied && live->State().varFrames.Size() == 4 &&
+                  live->State().frame.bVariable,
+                  "varframe OK keeps the scanned frames");
+            w.CloseTab(w.ActiveIndex());
+        }
+        QFile::remove(varPath);
     }
     // 不等长帧处理：前导码检测 + .bnt 输出
     {

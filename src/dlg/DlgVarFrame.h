@@ -23,7 +23,8 @@ class DlgVarFrame : public QDialog {
     Q_OBJECT
 public:
     DlgVarFrame(QWidget* parent, const bes::FileMap& map,
-                const bes::FrameModel& frame, bool processMode = false);
+                const bes::FrameModel& frame, bool processMode = false,
+                const bes::VariableFrameSet* existing = nullptr);
 
     // 编辑后的不等长帧集合
     const bes::VariableFrameSet& Frames() const { return m_frames; }
@@ -34,6 +35,10 @@ public:
 
     // 读入 BES-BNT 帧表（不等长帧查看/处理输出）
     bool LoadFrameFile(const QString& path, QString* err = nullptr);
+
+signals:
+    // 帧表变化（扫描/切分/编辑），主窗口据此实时预览
+    void FramesChanged();
 
 protected:
     void closeEvent(QCloseEvent* ev) override;
@@ -72,6 +77,7 @@ private:
     bool                   m_applied = false;
     bool                   m_processMode = false;
     bool                   m_running = false;
+    bool                   m_ready = false;   // 构造完成后才发预览信号
     std::atomic<bool>      m_stop{false};
 
     QTableWidget* m_table = nullptr;
