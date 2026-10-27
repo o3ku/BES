@@ -156,7 +156,7 @@ run-tests.bat
 ```
 
 - `test_core.exe`：189 断言。
-- `test_ui.exe`：426 断言（offscreen，已链接图标资源）。
+- `test_ui.exe`：440 断言（offscreen，已链接图标资源）。
 - 测试会隔离 QSettings（`BES_TEST_UI` / `BES_APP_SUFFIX`）。
 
 `test_ui` 覆盖：
@@ -423,8 +423,20 @@ FormCreate（`0x413A8F`/`0x413C7B`/`0x413AF7`）设的默认值：输入选择 =
 （与 `OutputWriter::emit` 同一换算）、按 `[ctx+0x8c]` 切块推送。本版本无工作线程，改为单线程 + 块间回调泵事件，
 `Pause/Resume/Stop/Reset/RequestExit` 与命令 3/4/5、`[ctx+0x18]` 一一对应，因此暂停/停止/退出依然即时生效。
 提示文案：「数据长度为0！」、「没有可用的数据流输入端口！」（客户端对端口数量/类型/最大数量的前置校验
-已在构件选择时按原版拦截，见「定制构件管理」）、「端口输入失败！」。仍未接的只有自定义视图尺寸同步
-（命令 100，`com.vtbl[+0x34](com, 100, &rect, 16)`），它需要真实构件窗口句柄。
+已在构件选择时按原版拦截，见「定制构件管理」）、「端口输入失败！」。
+
+命令 100 的分派层已按反汇编补齐：调用点是 `TProcessForm.SetComponent`（`0x414378`，
+实例写入 `[form+0x364]`）里的 `0x4154D3`——取 `[form+0x334]`（DFM 的 `TPanel ContainerPanel`，
+`Align = alBottom`、`OnResize = ContainerPanelResize`）客户区到 16 字节 `TRect`，再
+`push 0x10; push &rect; push 0x64; push com; call [vtbl+0x34]`。槽签名是
+`int (WINAPI*)(void* self, int cmd, void* arg, int argSize)`；返回 `-100`（`0xFFFFFF9C`）表示
+构件不提供自定义视图，宿主转 `0x4155F8` 隐藏 `ContainerPanel`，否则隐藏默认窗格并重排。
+`CreateInstance` 的第 4 个参数就是这个面板的 `Handle`（`0x4180C0..D0`，`TWinControl.Handle` 在 `+0x14C`）。
+落点：`bes::ViewRect` + `ComponentHost::SendCommand()`（vtable 索引 13，x64 字节 `0x68`，
+`__try/__except` 保护）与 `SetViewRect()`；`DestroyInstance()` 现在会真正调槽 1 释放，
+析构函数在 `FreeLibrary` 前释放全部存活实例。`tests/test_plugin.cpp` 在槽 13 记录命令并导出
+`TestPluginStats`。**仍未接**的是窗口托管本身：现版 `DlgProcess` 没有 `ContainerPanel`，
+托管需要把真实容器 HWND 交给构件，而仓库里没有原版 64 位构件可验证，故不虚构。
 
 ## 定制构件管理（`TComCustomForm` / `TComSelectForm`，反汇编确认）
 
@@ -525,6 +537,11 @@ Machine 字段拒绝）、`ComponentHost::RegisterDllCopied()`、`ComponentHost:
   widget 同时放进 QToolBar 和 QMenu，故用 `QWidgetAction` 镜像控件：`menuEdStart/menuEdFrameLen/
   menuEdStep/menuCboViewMode`，`OnMenu*Edited()` 先回写格式栏再走原槽，`UpdateMenuState()` 双向同步。
 - 顶层的「识别」助记符按 DFM 是 `(&R)`（不是 `(&I)`）；黄金基线因此变化一次。
+- 快捷键取自 `dxBarManager1` 二进制流的 `ShortCut` 记录（`scCtrl = 0x4000`、`scShift = 0x2000`，
+  低字节 ASCII）：新建/打开/保存/打印 `Ctrl+N/O/S/P`，剪切/复制/粘贴 `Ctrl+X/C/V`，
+  撤销 `Ctrl+Z`、重做 `Shift+Ctrl+Z`，联动 `Ctrl+A`，设为起点 `Ctrl+B`，取反裸键 `N`。
+  XTab/YTAB 的原版 `Tab`/`Shift+Tab` 不接：Qt 把它当焦点遍历键，窗口级 QAction 会破坏
+  对话框与表格导航。`F5/F6/F7/Del` 是本版扩展，DFM 无对应记录。
 
 ## 视图右键菜单（DFM 隐藏栏「快捷操作」）
 

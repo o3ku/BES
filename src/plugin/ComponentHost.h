@@ -77,6 +77,21 @@ struct ComponentInfo {
 
 using ComponentInstance = void*;
 
+// 构件命令分派：原版 TProcessForm.SetComponent 通过实例 vtable 索引 13
+// （32 位字节偏移 +0x34，x64 0x68）调用
+//   int (WINAPI*)(void* self, int cmd, void* arg, int argSize)
+// 已确认的调用点：0x4154D3 传命令 100、16 字节矩形和 ContainerPanel 客户区；
+// 返回值 -100（0xFFFFFF9C）表示构件不提供自定义视图，宿主据此隐藏面板。
+struct ViewRect {
+    int left = 0;
+    int top = 0;
+    int right = 0;
+    int bottom = 0;
+};
+static_assert(sizeof(ViewRect) == 16, "TRect 必须是 4 个 32 位整数");
+static constexpr int kCmdSetViewRect = 100;
+static constexpr int kCmdNoCustomView = -100;
+
 class ComponentHost {
 public:
     ComponentHost() = default;
@@ -141,6 +156,16 @@ public:
                         void* p2 = nullptr, void* p3 = nullptr,
                         std::wstring* err = nullptr);
     void DestroyInstance(ComponentInstance inst);
+
+    // 调用构件的命令槽（vtable 索引 13）。返回 false 表示实例为空或调用
+    // 触发 SEH 异常；构件自身的返回值经 result 带回。
+    bool SendCommand(ComponentInstance inst, int cmd, void* arg, int argSize,
+                     int* result = nullptr);
+
+    // 命令 100：把自定义视图容器的客户区矩形交给构件。返回 false 表示调用
+    // 失败；*hasView 按原版口径判断（构件返回 -100 即无自定义视图）。
+    bool SetViewRect(ComponentInstance inst, const ViewRect& rect,
+                     bool* hasView = nullptr);
 
     // 调用构件的 ShowModal(const char* file)；file 为空时传空指针
     bool ShowModal(const std::wstring& name, const std::wstring& file,

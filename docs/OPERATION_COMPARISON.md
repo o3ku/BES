@@ -177,6 +177,10 @@
 
 43. 列刻度数字避让与行/列单击反选（补齐用户报告的「列上的数字刻度全挤到一起了」「行、列选取，选中后无法取消」）：上/下标尺原按固定 4 格宽绘制数字，字节/十六进制模式每格都是 8 比特边界，逐格写字导致压字；现改为 `QFontMetrics::horizontalAdvance` 实际字宽排版，数字与上一标签右边界 + 6px 相交则跳过（刻度线全部保留），任意格宽/缩放/模式不再重叠。行/列选中无法取消的根因是缺少「再点一下」这一手势：原版 `MouseUp@0x444924` 行/列分支只做区间并集合并，`KeyDown@0x445B0C` 的 Esc 跳到 `0x44611D` 空操作，取消只能再点当前模式按钮（`AllowAllUp`）或「清除当前/全部选取」——这些路径本版均已具备。补上 `SelectionSet::ToggleRow/ToggleCol`（有序插入/删除、保持模式），`BesView::CommitSelection` 在行/列起止帧（列）相同即 toggle，拖动跨多行/列仍走 `AddRowRange/AddColRange` 累积。`test_core` +4、`test_ui` +4，核心 189 / UI 426；`GOLDEN OK`（黄金截图为 8 比特宽格，标签间距本就足够，基线不变）。
 
+44. 快捷键与原版 DFM 对齐（交互巡检）：逐条解码 `dxBarManager1` 二进制流里的 `ShortCut` 记录（`scCtrl = 0x4000`、`scShift = 0x2000`，低字节 ASCII）。原已一致：新建 `Ctrl+N`、打开 `Ctrl+O`、保存 `Ctrl+S`、打印 `Ctrl+P`、剪切/复制/粘贴 `Ctrl+X/C/V`、撤销 `Ctrl+Z`、重做 `Shift+Ctrl+Z`；本轮补上联动 `Ctrl+A`、设为起点 `Ctrl+B`、取反裸键 `N`。故意不接 XTab/YTAB 的 `Tab`/`Shift+Tab`：Qt 里它们是焦点遍历键，作为窗口级 QAction 快捷键会破坏对话框/表格导航，原版由 DevExpress 工具栏按钮自行处理按键，无法用 QAction 等价表达。`F5` 刷新、`F6` 帧长查找、`F7` 独特码查找、`Del` 清除当前选取在 DFM 无记录，保留为文档化扩展。`test_ui` +5 断言（逐项比对 `QKeySequence`），UI 431。
+
+45. 构件命令 100 分派层（补齐 6.27 的「仅接口层」）：真实调用点在 `0x4154D3`，属 `TProcessForm.SetComponent`（函数 `0x414378`，入口把构件实例写入 `[form+0x364]`）。它先经 `[form+0x334]`（`ContainerPanel`）的 `vtbl+0x40` 取客户区到 `[ebp-0x23C]` 的 16 字节 `TRect`，再 `push 0x10; push &rect; push 0x64; push com; call [vtbl+0x34]`，即 `int handler(void* self, int cmd, void* arg, int argSize)`。返回 `-100` 表示构件不提供自定义视图，宿主在 `0x4155F8` 对 `ContainerPanel` 调 `SetVisible(False)`（`0x59BF38`）；其余返回值隐藏默认窗格 `[form+0x2F0]/[form+0x2F4]`，并用调用前后的矩形比较结果重排窗体（`0x59B834/0x59B858/0x59B878`）。`CreateInstance` 第 4 参数确认是 `ContainerPanel.Handle`（`0x4180C0..D0`，`TWinControl.Handle` 在 `+0x14C`），第 2 参数是临时上下文记录（`0xAC` 字节），第 1 参数是注册名 `[form+0x2EC]`。落点（只做可验证部分）：`bes::ViewRect`（4×int32，16 字节）、`kCmdSetViewRect = 100`、`kCmdNoCustomView = -100`；`ComponentHost::SendCommand()` 经 vtable 索引 13（x64 `0x68`）分派、`__try/__except` 保护；`SetViewRect()` 按原版口径给出 `hasView`；`DestroyInstance()` 补调槽 1 释放，析构函数在 `FreeLibrary` 前释放存活实例。`test_plugin` 的命令槽记录命令号/长度/矩形/次数并被 `TestPluginStats` 导出；`test_ui` +9 断言（槽 13 分派、16 字节矩形原样送达、未知命令 -100、`SetViewRect` 两方向、调用计数、销毁释放），UI 440。**仍未接**：`DlgProcess` 没有原版的 `TPanel ContainerPanel`（DFM：`Align = alBottom`、`OnResize = ContainerPanelResize`），窗口托管需要把容器 HWND 交给真实构件，仓库内没有可验证的 64 位构件，故不虚构。核心 189 / UI 440；`GOLDEN OK`。
+
 ## 7. 仍未对齐的差异（已确认，不属于未对比）
 
 | 差异 | 影响 | 处理建议 |
@@ -190,14 +194,14 @@
 | 查看菜单的栏控件 | 原版把起点/帧长/步进/显示四个 `TdxBar*` 控件内嵌在查看菜单里（同一组 `ItemLinks` 与格式栏共用） | 已用 `QWidgetAction` 镜像控件补齐（见 6.35）；Qt 无法让一个 widget 同时在工具栏与菜单，故是等价镜像而非同一实例 |
 | 打印 | 原版 `PrintBtnClick` 只弹「未完待续...」，`TPrintForm` DFM 未实例化，无打印代码 | 本版提供实际打印 | 记为本版本扩展（见 6.33）；不追求与原版一致 |
 | 位图 | 原版下拉框仅 5 项；「位图」按钮不切模式；mode 7 是只能由魔数 `0x1234ABCD` 流恢复的字节网格视图（子格式 Bin/Hex/Text/BMP），正常 UI 不可达 | 下拉框恢复 5 项；位图按钮/菜单选中灰度 Pixel 视图 | 记为本版本扩展（见 6.34）；原版不能启动，无样张可校准 |
-| 构件端口按二进制 ABI 直连 | 原版由引擎对象 `[form+0x360]`（`+0x14` 句柄、`+0x18` 退出、`+0x19` 运行）在工作线程里直接调构件 `[form+0x364]` 的 vtable；现版 `bes::FlowEngine` 单线程、选区经 `IFlowPort` 落到临时文件端口 | 数据流管线已等价落地（见 6.27）；`BesCom.dll` 只导出 4 个符号，记录引擎的二进制布局不可验证，不虚构 ABI；仅剩构件自定义视图尺寸同步（命令 100）依赖真实构件窗口句柄 |
+| 构件端口按二进制 ABI 直连 | 原版由引擎对象 `[form+0x360]`（`+0x14` 句柄、`+0x18` 退出、`+0x19` 运行）在工作线程里直接调构件 `[form+0x364]` 的 vtable；现版 `bes::FlowEngine` 单线程、选区经 `IFlowPort` 落到临时文件端口 | 数据流管线已等价落地（见 6.27）；命令 100 分派层已落地（见 6.45）；`BesCom.dll` 只导出 4 个符号，记录引擎的二进制布局不可验证，不虚构 ABI；构件窗口托管（`ContainerPanel` + `CreateInstance` 第 4 参数 HWND）因无可验证的 64 位构件仍未接 |
 
 ## 8. 验证
 
 ```bat
 run-tests.bat
 => 核心 189 断言 ALL PASSED
-=> UI  426 断言 UI ALL PASSED
+=> UI  440 断言 UI ALL PASSED
 
 tools\golden.bat
 => GOLDEN OK

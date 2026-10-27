@@ -49,7 +49,7 @@ const QVector<Def> kDefs = {
     { CMD_VIEW_GROUP_HORIZ,   "分组横排(&H)",   GroupHoriz,  nullptr },
     { CMD_VIEW_GROUP_VERT,    "分组竖排(&V)",   GroupVert,   nullptr },
     { CMD_VIEW_GROUP,         "窗口分组(&G)",   -1,          nullptr },
-    { CMD_VIEW_LINK,          "联动(&L)",       LinkScroll,  nullptr },
+    { CMD_VIEW_LINK,          "联动(&L)",       LinkScroll,  "Ctrl+A" },
     { CMD_VIEW_TITLE,         "标题(&T)",       Title,       nullptr },
     { CMD_VIEW_PAGE,          "分页(&P)",       Page,        nullptr },
     { CMD_VIEW_HORIZ,         "横排(&H)",       Horiz,       nullptr },
@@ -95,14 +95,14 @@ const QVector<Def> kDefs = {
     // 帮助
     { CMD_APP_ABOUT, "关于...", -1, nullptr },
     // 快捷操作栏（Bar3）
-    { CMD_SET_START,        "设为起点",       SetStart,  nullptr },
+    { CMD_SET_START,        "设为起点",       SetStart,  "Ctrl+B" },
     { CMD_DATA_OUTPUT,      "数据输出...",    Output,    nullptr },
     { CMD_BOOKMARK_TOGGLE,  "切换书签",       BookMark,  nullptr },
     { CMD_BOOKMARK_NEXT,    "下一标签",       BmNext,    nullptr },
     { CMD_BOOKMARK_PREV,    "上一标签",       BmPrev,    nullptr },
     { CMD_BOOKMARK_CLEAR,   "清除标签",       BmClear,   nullptr },
     // 格式栏（Bar2）附加
-    { CMD_DATA_NOT,     "取反",  Not,     nullptr },
+    { CMD_DATA_NOT,     "取反",  Not,     "N" },
     { CMD_DATA_REVERSE, "倒序",  Reverse, nullptr },
     { CMD_VIEW_HTAB,    "XTAB",  XTab,    nullptr },
     { CMD_VIEW_VTAB,    "YTAB",  YTab,    nullptr },

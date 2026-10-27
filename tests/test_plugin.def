@@ -4,3 +4,5 @@ EXPORTS
     RegComInfo
     CreateInstance
     ShowModal
+    TestPluginStats
+    TestPluginResetStats

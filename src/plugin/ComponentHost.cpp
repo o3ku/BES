@@ -192,6 +192,8 @@ bool ProbeAbi(const std::wstring& path, std::vector<ComponentInfo>* out,
 } // namespace
 
 ComponentHost::~ComponentHost() {
+    // 必须在 FreeLibrary 之前释放实例：槽 1 的代码在构件 DLL 里
+    for (ComponentInstance inst : m_instances) ReleaseInstanceSEH(inst);
     m_instances.clear();
     for (Loaded* l : m_loaded) {
         if (l->module) ::FreeLibrary(l->module);
@@ -442,9 +444,37 @@ void ComponentHost::DestroyInstance(ComponentInstance inst) {
     for (size_t i = 0; i < m_instances.size(); ++i) {
         if (m_instances[i] == inst) {
             m_instances.erase(m_instances.begin() + static_cast<long>(i));
+            ReleaseInstanceSEH(inst);
             return;
         }
     }
+}
+
+bool ComponentHost::SendCommand(ComponentInstance inst, int cmd, void* arg,
+                                int argSize, int* result) {
+    if (!inst) return false;
+    typedef int (WINAPI* CmdFn)(void*, int, void*, int);
+    void** vt = *reinterpret_cast<void***>(inst);
+    CmdFn fn = reinterpret_cast<CmdFn>(vt[13]);
+    if (!fn) return false;
+    int r = 0;
+    __try {
+        r = fn(inst, cmd, arg, argSize);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    if (result) *result = r;
+    return true;
+}
+
+bool ComponentHost::SetViewRect(ComponentInstance inst, const ViewRect& rect,
+                                bool* hasView) {
+    int r = kCmdNoCustomView;
+    const bool ok = SendCommand(inst, kCmdSetViewRect,
+                                const_cast<ViewRect*>(&rect),
+                                static_cast<int>(sizeof(rect)), &r);
+    if (hasView) *hasView = ok && r != kCmdNoCustomView;
+    return ok;
 }
 
 bool ComponentHost::ShowModal(const std::wstring& name, const std::wstring& file,

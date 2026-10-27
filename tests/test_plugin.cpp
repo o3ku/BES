@@ -23,6 +23,13 @@ namespace {
 // 内联定长结构：0x58 头 + 2 个 0x3C 端口
 constexpr DWORD kBlobSize = 0x58 + 2 * 0x3C;
 
+// 命令槽记录（vtable 索引 13）。单进程单实例测试，用 Interlocked 只为对齐类型。
+volatile LONG g_cmd = 0;
+volatile LONG g_cmdSize = 0;
+volatile LONG g_rect[4] = { 0, 0, 0, 0 };
+volatile LONG g_cmdCalls = 0;
+volatile LONG g_releaseCalls = 0;
+
 void CopyFixed(char* dst, size_t cap, const char* src) {
     size_t n = std::strlen(src);
     if (n >= cap) n = cap - 1;
@@ -38,7 +45,10 @@ public:
     // vtable 索引 0：占位
     virtual void pad0() {}
     // vtable 索引 1：释放（原版通过 [vtable+4] 调用）
-    virtual void release() { delete this; }
+    virtual void release() {
+        ::InterlockedIncrement(&g_releaseCalls);
+        delete this;
+    }
 
     virtual void pad2() {}
     virtual void pad3() {}
@@ -51,7 +61,21 @@ public:
     virtual void pad10() {}
     virtual void pad11() {}
     virtual void pad12() {}
-    virtual void pad13() {}
+
+    // vtable 索引 13（原版 +0x34）：命令分派。命令 100 收 16 字节矩形，
+    // 返回 -100 表示「不提供自定义视图」（与宿主侧判定一致）。
+    virtual int command(int cmd, void* arg, int size) {
+        ::InterlockedIncrement(&g_cmdCalls);
+        ::InterlockedExchange(&g_cmd, cmd);
+        ::InterlockedExchange(&g_cmdSize, size);
+        if (cmd == 100 && arg && size >= 16) {
+            const int* r = static_cast<const int*>(arg);
+            for (int i = 0; i < 4; ++i) ::InterlockedExchange(&g_rect[i], r[i]);
+            return 0;
+        }
+        return -100;
+    }
+
     virtual void pad14() {}
     virtual void pad15() {}
     virtual void pad16() {}
@@ -125,6 +149,27 @@ extern "C" __declspec(dllexport) DWORD __stdcall ShowModal(const char* file)
     ::WriteFile(h, file, static_cast<DWORD>(std::strlen(file)), &written, nullptr);
     ::CloseHandle(h);
     return 0;
+}
+
+// 命令槽/释放槽记录：out = {cmd, argSize, rect[4], cmdCalls, releaseCalls}
+extern "C" __declspec(dllexport) int __stdcall TestPluginStats(int* out, int cap)
+{
+    if (!out || cap < 8) return 0;
+    out[0] = g_cmd;
+    out[1] = g_cmdSize;
+    for (int i = 0; i < 4; ++i) out[2 + i] = g_rect[i];
+    out[6] = g_cmdCalls;
+    out[7] = g_releaseCalls;
+    return 8;
+}
+
+extern "C" __declspec(dllexport) void __stdcall TestPluginResetStats()
+{
+    ::InterlockedExchange(&g_cmd, 0);
+    ::InterlockedExchange(&g_cmdSize, 0);
+    for (int i = 0; i < 4; ++i) ::InterlockedExchange(&g_rect[i], 0);
+    ::InterlockedExchange(&g_cmdCalls, 0);
+    ::InterlockedExchange(&g_releaseCalls, 0);
 }
 
 BOOL WINAPI DllMain(HINSTANCE, DWORD, LPVOID) { return TRUE; }

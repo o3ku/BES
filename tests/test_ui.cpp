@@ -11,7 +11,9 @@
 #include <QGroupBox>
 #include <QElapsedTimer>
 #include <QKeyEvent>
+#include <QKeySequence>
 #include <QLabel>
+#include <QLibrary>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
@@ -922,6 +924,48 @@ int main(int argc, char** argv)
           "CreateInstance 4-arg ABI");
     CHECK(inst != nullptr, "component instance non-null");
 
+    // 构件命令 100：TProcessForm.SetComponent 用 ContainerPanel 客户区矩形
+    // 经 vtable 索引 13 同步自定义视图；-100 = 构件不提供自定义视图。
+    {
+        QLibrary lib(plugin);
+        CHECK(lib.load(), "test plugin loaded for command stats");
+        using ResetFn = void (__stdcall*)();
+        using StatsFn = int (__stdcall*)(int*, int);
+        auto reset = reinterpret_cast<ResetFn>(lib.resolve("TestPluginResetStats"));
+        auto stats = reinterpret_cast<StatsFn>(lib.resolve("TestPluginStats"));
+        CHECK(reset && stats, "test plugin exports command stats");
+        if (reset && stats) {
+            reset();
+            bes::ViewRect rc{5, 7, 405, 307};
+            int r = -1;
+            CHECK(w.Components().SendCommand(inst, bes::kCmdSetViewRect, &rc,
+                                             static_cast<int>(sizeof(rc)), &r) &&
+                      r == 0,
+                  "command 100 dispatches through vtable slot 13");
+            int st[8] = {0};
+            CHECK(stats(st, 8) == 8 && st[0] == bes::kCmdSetViewRect && st[1] == 16 &&
+                      st[2] == 5 && st[3] == 7 && st[4] == 405 && st[5] == 307,
+                  "component receives the 16-byte rect unchanged");
+            CHECK(w.Components().SendCommand(inst, 77, nullptr, 0, &r) && r == -100,
+                  "unsupported command returns -100 (no custom view)");
+            bool hasView = false;
+            CHECK(w.Components().SetViewRect(inst, rc, &hasView) && hasView,
+                  "SetViewRect reports the component provides a view");
+            hasView = true;
+            CHECK(!w.Components().SetViewRect(nullptr, rc, &hasView) && !hasView,
+                  "SetViewRect without an instance reports no view");
+            CHECK(stats(st, 8) == 8 && st[6] == 3,
+                  "three command calls recorded on the component");
+            w.Components().DestroyInstance(inst);
+            inst = nullptr;
+            CHECK(stats(st, 8) == 8 && st[7] == 1,
+                  "DestroyInstance calls vtable slot 1 (release)");
+        } else {
+            w.Components().DestroyInstance(inst);
+            inst = nullptr;
+        }
+    }
+
     // 构件 ShowModal ABI：按 ANSI 路径调用，构件自身创建标记文件
     {
         const QString modalPath = QDir::tempPath() + QStringLiteral("/bes_modal_test.dat");
@@ -1419,6 +1463,31 @@ int main(int argc, char** argv)
             }
             w.MoveTabToGroup(idx1, QStringLiteral("数据窗口"));
         }
+    }
+
+    // 快捷键按原版 TdxBarManager ShortCut（DFM 二进制流）核对
+    {
+        auto sc = [&](int id) {
+            QAction* a = w.Cmds()->Find(id);
+            return a ? a->shortcut() : QKeySequence();
+        };
+        CHECK(sc(CMD_FILE_NEW) == QKeySequence(QStringLiteral("Ctrl+N")) &&
+              sc(CMD_FILE_OPEN) == QKeySequence(QStringLiteral("Ctrl+O")) &&
+              sc(CMD_FILE_SAVE) == QKeySequence(QStringLiteral("Ctrl+S")) &&
+              sc(CMD_FILE_PRINT) == QKeySequence(QStringLiteral("Ctrl+P")),
+              "文件快捷键与原版一致（Ctrl+N/O/S/P）");
+        CHECK(sc(CMD_EDIT_CUT) == QKeySequence(QStringLiteral("Ctrl+X")) &&
+              sc(CMD_EDIT_COPY) == QKeySequence(QStringLiteral("Ctrl+C")) &&
+              sc(CMD_EDIT_PASTE) == QKeySequence(QStringLiteral("Ctrl+V")) &&
+              sc(CMD_EDIT_UNDO) == QKeySequence(QStringLiteral("Ctrl+Z")) &&
+              sc(CMD_EDIT_REDO) == QKeySequence(QStringLiteral("Ctrl+Shift+Z")),
+              "编辑快捷键与原版一致（X/C/V/Z、重做 Shift+Ctrl+Z）");
+        CHECK(sc(CMD_VIEW_LINK) == QKeySequence(QStringLiteral("Ctrl+A")),
+              "联动沿用原版 Ctrl+A");
+        CHECK(sc(CMD_SET_START) == QKeySequence(QStringLiteral("Ctrl+B")),
+              "设为起点沿用原版 Ctrl+B");
+        CHECK(sc(CMD_DATA_NOT) == QKeySequence(QStringLiteral("N")),
+              "取反沿用原版裸键 N");
     }
 
     // 截图
