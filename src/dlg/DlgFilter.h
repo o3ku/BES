@@ -6,7 +6,7 @@
 
 #include "core/SearchEngine.h"
 
-namespace bes { class FileMap; }
+namespace bes { class FileMap; class VariableFrameSet; }
 
 class QComboBox;
 class QLabel;
@@ -19,7 +19,9 @@ class QTabWidget;
 class DlgFilter : public QDialog {
     Q_OBJECT
 public:
-    DlgFilter(QWidget* parent, const bes::FileMap& map, const bes::FrameModel& fm);
+    DlgFilter(QWidget* parent, const bes::FileMap& map, const bes::FrameModel& fm,
+              const bes::FrameFilter* existing = nullptr,
+              const bes::VariableFrameSet* vframes = nullptr);
 
     const bes::FrameFilter& Filter() const { return m_filter; }
     const std::vector<uint64_t>& Matched() const { return m_matched; }
@@ -46,6 +48,7 @@ private:
 
     const bes::FileMap* m_map = nullptr;
     bes::FrameModel     m_frame;
+    const bes::VariableFrameSet* m_vframes = nullptr;
     bes::FrameFilter    m_filter;
     std::vector<bes::FilterCondition> m_conds;
     std::vector<uint64_t> m_matched;

@@ -498,6 +498,52 @@ int main(int argc, char** argv)
             CHECK(dlg.Matched().size() == 1 && dlg.Matched()[0] == 0,
                   "filter AND matches frame 0");
         }
+        {
+            // 重开对话框必须回填上次生效的条件，否则点「确定」会把过滤清掉
+            DlgFilter first(&w, fmap, ffm);
+            auto* fe = first.findChild<QLineEdit*>(QStringLiteral("frameEdit"));
+            auto* add1 = first.findChild<QPushButton*>(QStringLiteral("addButton"));
+            auto* ok1 = first.findChild<QPushButton*>(QStringLiteral("okButton"));
+            auto* list1 = first.findChild<QListWidget*>(QStringLiteral("filterList"));
+            if (fe) fe->setText(QStringLiteral("4"));
+            if (add1) add1->click();
+            const QString condText = list1 && list1->count() > 0
+                ? list1->item(0)->text() : QString();
+            if (ok1) ok1->click();
+
+            DlgFilter again(&w, fmap, ffm, &first.Filter());
+            auto* list2 = again.findChild<QListWidget*>(QStringLiteral("filterList"));
+            auto* ok2 = again.findChild<QPushButton*>(QStringLiteral("okButton"));
+            CHECK(list2 && list2->count() == 1 && list2->item(0)->text() == condText,
+                  "filter reopens seeded with the applied condition");
+            if (ok2) ok2->click();
+            CHECK(again.Filter().conditions.size() == 1,
+                  "filter ok without edits keeps the conditions");
+            CHECK(again.Matched().size() == 4,
+                  "filter reopen recomputes matches");
+        }
+        {
+            // 不等长帧时按帧表逐帧判定，帧号即帧表下标
+            VariableFrameSet vfs;
+            vfs.Add(0, 32);
+            vfs.Add(32, 16);
+            vfs.Add(48, 32);
+            vfs.Add(80, 48);
+            FrameModel vfm = ffm;
+            vfm.bVariable = true;
+            DlgFilter dlg(&w, fmap, vfm, nullptr, &vfs);
+            auto* tabs = dlg.findChild<QTabWidget*>(QStringLiteral("filterTabs"));
+            auto* fe = dlg.findChild<QLineEdit*>(QStringLiteral("frameEdit"));
+            auto* add = dlg.findChild<QPushButton*>(QStringLiteral("addButton"));
+            auto* ok = dlg.findChild<QPushButton*>(QStringLiteral("okButton"));
+            if (tabs) tabs->setCurrentIndex(0);
+            if (fe) fe->setText(QStringLiteral("4"));
+            if (add) add->click();
+            if (ok) ok->click();
+            CHECK(dlg.Matched().size() == 2 && dlg.Matched()[0] == 0 &&
+                  dlg.Matched()[1] == 2,
+                  "filter matches variable frames by their own length");
+        }
         fmap.Close();
         QFile::remove(filterPath);
     }

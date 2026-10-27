@@ -125,7 +125,11 @@ DWORD __stdcall ShowModal(const char* file);
   （字节 0 为类型，+1 数值位置，+5 数值类型，+6 判定，+7 数值/帧长），
   多条件相“与”。数值输入按“从低字节到高字节”，解析时最左侧一组为最低字节；
   双字节/四字节回显同样低字节在前。CRC 条件固定校验帧尾最后 2 字节
-  （CRC-16/CCITT-FALSE，高字节在前），仅区分通过/失败。
+  （CRC-16/CCITT-FALSE，高字节在前），仅区分通过/失败。构造时回填上次生效的条件
+  （`MainWindow::DoFilter` 把 `DocState::filter` 传进来，回填要放在 `OnDataTypeChanged()` 之后，
+  否则判定下拉索引被复位），否则重开点「确定」会把过滤清零。不等长帧生效时改走
+  `SearchEngine::ApplyFilter(map, VariableFrameSet, ...)`（与等长版共用 `FrameMatches`，帧长条件比较
+  该帧自身长度），返回的帧号即帧表下标；`Renderer::FrameOfRow` 负责显示行→帧号的过滤映射。
 - 格式栏起点/帧长/步进的文本框加一对上下箭头，等效 `TdxBarSpinEdit`：
   按当前显示单位 ±1、0 处钳制；文本仍保留 64 位十进制输入（不换成 QSpinBox，避免 32 位上限）。
 - 倒序与参数设置“高位在前(0-7)”是同一个 `highBitFirst` 选项：`DataFormatBtn`
@@ -155,8 +159,8 @@ DWORD __stdcall ShowModal(const char* file);
 run-tests.bat
 ```
 
-- `test_core.exe`：189 断言。
-- `test_ui.exe`：452 断言（offscreen，已链接图标资源）。
+- `test_core.exe`：196 断言。
+- `test_ui.exe`：456 断言（offscreen，已链接图标资源）。
 - 测试会隔离 QSettings（`BES_TEST_UI` / `BES_APP_SUFFIX`）。
 
 `test_ui` 覆盖：
@@ -176,6 +180,7 @@ run-tests.bat
 - 14 个对话框全部构造（含 `DlgProcess`/`DlgProgress`）；关于对话框标题/产品名/确定按钮；
 - 搜索帧长默认参数（30/2）与 64 比特同步列命中；
 - 帧过滤条件列表：描述文本、数值低字节在前、CRC 通过/失败、多条件相“与”；
+- 帧过滤重开回填已生效条件（再次确定不清空、重算命中）、不等长帧过滤按帧表下标命中；
 - 64 位构件注册 + 4 参数 `CreateInstance` + `ShowModal`；
 - 快速执行：临时宿主枚举选中 DLL 的构件、非构件二进制（`test_ui.exe`）报「不是局级系统构件！」且不注册任何构件、「快速执行」与「刷新」为两个独立命令；
 - 32 位构件被明确拒绝；

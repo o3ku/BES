@@ -131,6 +131,9 @@ public:
     uint64_t FrameLenOfRow(uint64_t row) const;
 
 private:
+    // 显示行 -> 帧号（过滤生效时按可见帧列表映射）
+    uint64_t FrameOfRow(uint64_t row) const;
+
     const FileMap*          m_map = nullptr;
     const FrameModel*       m_frame = nullptr;
     const SelectionSet*     m_sel = nullptr;

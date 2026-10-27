@@ -327,6 +327,22 @@ int main()
         CHECK(found64, "var frame row1 starts at 64");
         wchar_t buf[32];
         CHECK(r.YAxisText(1, buf, 32) && std::wstring(buf) == L"1", "var YFN row1 = 1");
+
+        // 不等长帧 + 过滤：只显示选中的帧，行号/行首比特按帧表下标映射
+        std::vector<uint64_t> vvis{1};
+        Renderer rv;
+        rv.SetData(&map); rv.SetFrame(&vf); rv.SetParams(p);
+        rv.SetVariableFrames(&frames); rv.SetVisibleFrames(&vvis, true);
+        std::vector<Cell> vcells; uint64_t vrows = 0, vcols = 0;
+        rv.Layout(800, 400, 10, 20, 0, 0, vcells, vrows, vcols);
+        CHECK(vrows == 1, "var+filter: rows follow the visible list");
+        CHECK(!vcells.empty() && vcells[0].bitPos == 64,
+              "var+filter: first row is the selected frame");
+        wchar_t vbuf[32];
+        CHECK(rv.YAxisText(0, vbuf, 32) && std::wstring(vbuf) == L"1",
+              "var+filter: YFN reports the mapped frame index");
+        CHECK(rv.RowStartBit(0) == 64 && rv.FrameLenOfRow(0) == 128,
+              "var+filter: row metrics follow the mapped frame");
     }
 
     // ---- 过滤：可见帧映射 ----
@@ -731,6 +747,23 @@ int main()
         ff.conditions.assign(1, fb);
         CHECK(feng.ApplyFilter(fmap, ffm, ff, idx, nullptr, fstop) && idx.empty(),
               "filter bit value mismatch");
+
+        // 不等长帧过滤：帧号是帧表下标，帧长条件按各帧自身长度判定
+        VariableFrameSet vfs;
+        vfs.Add(0, 32); vfs.Add(32, 16); vfs.Add(48, 32); vfs.Add(80, 48);
+        FrameFilter vfl; vfl.conditions = { fl };
+        CHECK(feng.ApplyFilter(fmap, vfs, vfl, idx, nullptr, fstop) &&
+              idx.size() == 2 && idx[0] == 0 && idx[1] == 2,
+              "var filter judges each frame's own length");
+        FrameFilter vfv; vfv.conditions = { fv };
+        CHECK(feng.ApplyFilter(fmap, vfs, vfv, idx, nullptr, fstop) &&
+              idx.size() == 2 && idx[0] == 0 && idx[1] == 1,
+              "var filter reads values from each frame's start");
+        FilterCondition crc; crc.kind = FilterKind::Crc; crc.crcPass = true;
+        FrameFilter vcrc; vcrc.conditions = { crc };
+        CHECK(feng.ApplyFilter(fmap, vfs, vcrc, idx, nullptr, fstop) &&
+              idx.size() == 1 && idx[0] == 0,
+              "var filter checks CRC against each frame tail");
 
         fmap.Close();
         DeleteFileW(fpath.c_str());

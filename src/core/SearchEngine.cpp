@@ -217,6 +217,77 @@ bool SearchEngine::FindFrameLength(const FileMap& map, const FrameLengthSpec& sp
     return true;
 }
 
+namespace {
+
+// 单帧判定：帧起点 base、帧长 frameBits（比特），多条件相「与」。
+// 等长帧与不等长帧共用，帧长条件比较的是该帧自身的长度。
+bool FrameMatches(const FileMap& map, uint64_t base, uint64_t frameBits,
+                  const FrameFilter& filter)
+{
+    auto compare = [](uint64_t a, uint64_t b, CmpOp op) {
+        switch (op) {
+        case CmpOp::Eq: return a == b;
+        case CmpOp::Gt: return a > b;
+        case CmpOp::Lt: return a < b;
+        case CmpOp::Ne: return a != b;
+        }
+        return false;
+    };
+
+    for (const FilterCondition& c : filter.conditions) {
+        switch (c.kind) {
+        case FilterKind::FrameLength:
+            if (!compare(frameBits, static_cast<uint64_t>(std::max(0, c.frameBits)),
+                         c.frameOp))
+                return false;
+            break;
+        case FilterKind::Value: {
+            int bits = c.valueBits;
+            if (bits != 1 && bits != 8 && bits != 16 && bits != 32)
+                bits = 8;
+            const int pos = std::max(0, c.valuePos);
+            const uint64_t bitPos = (bits == 1)
+                ? base + static_cast<uint64_t>(pos)
+                : base + static_cast<uint64_t>(pos) * 8;
+            if (bitPos < base || bitPos + static_cast<uint64_t>(bits) > base + frameBits)
+                return false;
+            uint64_t v = 0;
+            if (bits == 1) {
+                v = map.ReadBits(bitPos, 1) & 1u;
+            } else {
+                // 原版数值按低字节在前输入：帧内首字节为最低字节
+                for (int b = 0; b < bits / 8; ++b)
+                    v |= static_cast<uint64_t>(map.ReadByteAtBit(bitPos + static_cast<uint64_t>(b) * 8))
+                         << (b * 8);
+            }
+            if (!compare(v, c.value, c.valueOp))
+                return false;
+            break;
+        }
+        case FilterKind::Crc: {
+            const uint64_t frameBytes = frameBits / 8;
+            if (frameBytes < 3)
+                return false;
+            const int crcPos = static_cast<int>(frameBytes) - 2;
+            std::vector<uint8_t> frameData(static_cast<size_t>(frameBytes));
+            for (uint64_t b = 0; b < frameBytes; ++b)
+                frameData[static_cast<size_t>(b)] = map.ReadByteAtBit(base + b * 8);
+            const uint16_t calc = Crc16(frameData.data(),
+                                        static_cast<size_t>(crcPos), 0);
+            const uint16_t stored = static_cast<uint16_t>(
+                (frameData[static_cast<size_t>(crcPos)] << 8) |
+                frameData[static_cast<size_t>(crcPos) + 1]);
+            if ((calc == stored) != c.crcPass)
+                return false;
+            break;
+        }
+        }
+    }
+    return true;
+}
+
+} // namespace
+
 bool SearchEngine::ApplyFilter(const FileMap& map, const FrameModel& fm,
                                 const FrameFilter& filter,
                                 std::vector<uint64_t>& frameIndices,
@@ -233,76 +304,32 @@ bool SearchEngine::ApplyFilter(const FileMap& map, const FrameModel& fm,
 
     const uint64_t frames = (totalBits > start) ? (totalBits - start) / frameBits : 0;
 
-    auto compare = [](uint64_t a, uint64_t b, CmpOp op) {
-        switch (op) {
-        case CmpOp::Eq: return a == b;
-        case CmpOp::Gt: return a > b;
-        case CmpOp::Lt: return a < b;
-        case CmpOp::Ne: return a != b;
-        }
-        return false;
-    };
-
     for (uint64_t i = 0; i < frames; ++i) {
         if (stopFlag.load()) return false;
-        const uint64_t base = start + i * frameBits;
+        if (FrameMatches(map, start + i * frameBits, frameBits, filter))
+            frameIndices.push_back(i);
 
-        bool ok = true;
-        for (const FilterCondition& c : filter.conditions) {
-            if (!ok) break;
-            switch (c.kind) {
-            case FilterKind::FrameLength:
-                if (!compare(frameBits, static_cast<uint64_t>(std::max(0, c.frameBits)),
-                             c.frameOp))
-                    ok = false;
-                break;
-            case FilterKind::Value: {
-                int bits = c.valueBits;
-                if (bits != 1 && bits != 8 && bits != 16 && bits != 32)
-                    bits = 8;
-                const int pos = std::max(0, c.valuePos);
-                const uint64_t bitPos = (bits == 1)
-                    ? base + static_cast<uint64_t>(pos)
-                    : base + static_cast<uint64_t>(pos) * 8;
-                if (bitPos < base || bitPos + static_cast<uint64_t>(bits) > base + frameBits) {
-                    ok = false;
-                    break;
-                }
-                uint64_t v = 0;
-                if (bits == 1) {
-                    v = map.ReadBits(bitPos, 1) & 1u;
-                } else {
-                    // 原版数值按低字节在前输入：帧内首字节为最低字节
-                    for (int b = 0; b < bits / 8; ++b)
-                        v |= static_cast<uint64_t>(map.ReadByteAtBit(bitPos + static_cast<uint64_t>(b) * 8))
-                             << (b * 8);
-                }
-                if (!compare(v, c.value, c.valueOp))
-                    ok = false;
-                break;
-            }
-            case FilterKind::Crc: {
-                const uint64_t frameBytes = frameBits / 8;
-                if (frameBytes < 3) {
-                    ok = false;
-                    break;
-                }
-                const int crcPos = static_cast<int>(frameBytes) - 2;
-                std::vector<uint8_t> frameData(static_cast<size_t>(frameBytes));
-                for (uint64_t b = 0; b < frameBytes; ++b)
-                    frameData[static_cast<size_t>(b)] = map.ReadByteAtBit(base + b * 8);
-                const uint16_t calc = Crc16(frameData.data(),
-                                            static_cast<size_t>(crcPos), 0);
-                const uint16_t stored = static_cast<uint16_t>(
-                    (frameData[static_cast<size_t>(crcPos)] << 8) |
-                    frameData[static_cast<size_t>(crcPos) + 1]);
-                if ((calc == stored) != c.crcPass)
-                    ok = false;
-                break;
-            }
-            }
-        }
-        if (ok)
+        if (onProgress && (i & 0xFF) == 0)
+            onProgress(i, frames, false);
+    }
+    if (onProgress) onProgress(frames, frames, true);
+    return true;
+}
+
+bool SearchEngine::ApplyFilter(const FileMap& map, const VariableFrameSet& vframes,
+                                const FrameFilter& filter,
+                                std::vector<uint64_t>& frameIndices,
+                                const ProgressFn& onProgress,
+                                const std::atomic<bool>& stopFlag) {
+    frameIndices.clear();
+    if (!map.IsOpen())
+        return false;
+
+    const uint64_t frames = vframes.Size();
+    for (uint64_t i = 0; i < frames; ++i) {
+        if (stopFlag.load()) return false;
+        const VariableFrame& f = vframes.Frames()[static_cast<size_t>(i)];
+        if (FrameMatches(map, f.startBit, f.length, filter))
             frameIndices.push_back(i);
 
         if (onProgress && (i & 0xFF) == 0)

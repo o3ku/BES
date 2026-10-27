@@ -57,7 +57,9 @@ Renderer::Geometry Renderer::Compute(int colsPerRow) const {
             maxCells = std::max(maxCells, n);
         }
         g.cellsPerFrame = maxCells;
-        g.rows = m_vframes->Size();
+        g.rows = (m_visibleActive && m_visible)
+                     ? m_visible->size()
+                     : m_vframes->Size();
         g.cols = maxCells;
         return g;
     }
@@ -147,8 +149,9 @@ void Renderer::Layout(int viewWidth, int viewHeight, int charWidth, int charHeig
         uint64_t frameStart = 0, frameLen = 0, nCells = 0, frameIdx = rowAbs;
 
         if (g.variable) {
-            if (rowAbs >= m_vframes->Size()) break;
-            const VariableFrame& vf = m_vframes->Frames()[static_cast<size_t>(rowAbs)];
+            const uint64_t fi = FrameOfRow(rowAbs);
+            if (fi >= m_vframes->Size()) break;
+            const VariableFrame& vf = m_vframes->Frames()[static_cast<size_t>(fi)];
             frameStart = vf.startBit;
             frameLen = vf.length;
             nCells = std::max<uint64_t>(1, (frameLen + static_cast<uint64_t>(bpc) - 1) /
@@ -288,8 +291,9 @@ bool Renderer::HitTest(int x, int y, int viewWidth, int viewHeight,
 
     uint64_t frameStart = 0, frameLen = 0, nCells = 0, frameIdx = rowAbs;
     if (g.variable) {
-        if (rowAbs >= m_vframes->Size()) return false;
-        const VariableFrame& vf = m_vframes->Frames()[static_cast<size_t>(rowAbs)];
+        frameIdx = FrameOfRow(rowAbs);
+        if (frameIdx >= m_vframes->Size()) return false;
+        const VariableFrame& vf = m_vframes->Frames()[static_cast<size_t>(frameIdx)];
         frameStart = vf.startBit;
         frameLen = vf.length;
         nCells = std::max<uint64_t>(1, (frameLen + static_cast<uint64_t>(bpc) - 1) /
@@ -369,8 +373,9 @@ bool Renderer::YAxisText(uint64_t rowIdx, wchar_t* buf, size_t bufLen) const {
 
     uint64_t frameIdx = rowIdx, start = 0, len = 0;
     if (m_frame->bVariable && m_vframes && m_vframes->Size() > 0) {
-        if (rowIdx >= m_vframes->Size()) return false;
-        const VariableFrame& vf = m_vframes->Frames()[static_cast<size_t>(rowIdx)];
+        frameIdx = FrameOfRow(rowIdx);
+        if (frameIdx >= m_vframes->Size()) return false;
+        const VariableFrame& vf = m_vframes->Frames()[static_cast<size_t>(frameIdx)];
         start = vf.startBit;
         len = vf.length;
     } else {
@@ -397,11 +402,21 @@ bool Renderer::IsFrameRows() const {
            m_params.layout != ViewLayout::GroupH;
 }
 
+uint64_t Renderer::FrameOfRow(uint64_t row) const {
+    if (m_visibleActive && m_visible) {
+        if (row >= m_visible->size())
+            return static_cast<uint64_t>(-1);
+        return (*m_visible)[static_cast<size_t>(row)];
+    }
+    return row;
+}
+
 uint64_t Renderer::RowStartBit(uint64_t row) const {
     if (!m_frame) return 0;
     if (m_frame->bVariable && m_vframes && m_vframes->Size() > 0) {
-        if (row >= m_vframes->Size()) return m_frame->startBit;
-        return m_vframes->Frames()[static_cast<size_t>(row)].startBit;
+        const uint64_t fi = FrameOfRow(row);
+        if (fi >= m_vframes->Size()) return m_frame->startBit;
+        return m_vframes->Frames()[static_cast<size_t>(fi)].startBit;
     }
     uint64_t frameIdx = row;
     if (m_visibleActive && m_visible) {
@@ -423,8 +438,9 @@ uint64_t Renderer::FrameStartBit(uint64_t frameIndex) const {
 uint64_t Renderer::FrameLenOfRow(uint64_t row) const {
     if (!m_frame) return 0;
     if (m_frame->bVariable && m_vframes && m_vframes->Size() > 0) {
-        if (row >= m_vframes->Size()) return EffectiveFrameLen(m_colsPerRow);
-        return m_vframes->Frames()[static_cast<size_t>(row)].length;
+        const uint64_t fi = FrameOfRow(row);
+        if (fi >= m_vframes->Size()) return EffectiveFrameLen(m_colsPerRow);
+        return m_vframes->Frames()[static_cast<size_t>(fi)].length;
     }
     return EffectiveFrameLen(m_colsPerRow);
 }

@@ -101,6 +101,12 @@ public:
                      std::vector<uint64_t>& frameIndices,
                      const ProgressFn& onProgress,
                      const std::atomic<bool>& stopFlag);
+
+    // 不等长帧过滤：帧号即 VariableFrameSet 的下标，帧长条件按每帧自身长度判定
+    bool ApplyFilter(const FileMap& map, const VariableFrameSet& frames, const FrameFilter& filter,
+                     std::vector<uint64_t>& frameIndices,
+                     const ProgressFn& onProgress,
+                     const std::atomic<bool>& stopFlag);
 };
 
 } // namespace bes

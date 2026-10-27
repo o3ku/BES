@@ -183,6 +183,9 @@
 
 46. 不等长帧查看「确定后无变化」（用户报告）：`BesDoc::OpenFile` 按原版默认把帧长设为 64 比特（见 1），而 `DlgVarFrame` 构造时又用当前帧长自动铺满帧表，因此「确定」应用的是一张与当前等长视图完全相同的 64 比特表——真机截图逐字节相同；且再次打开对话框会用这张等长表覆盖已生效的不等长帧。落点：构造时不再自动铺满，改为空表并提示「按帧长切分或输入前导码扫描」；已有不等长帧时回填 `VariableFrameSet`（起点/默认帧长取首帧），取消保持原状；`应用/确定` 仅在帧表非空时可用；`Reload()` 发 `FramesChanged()`，`MainWindow::DoVarFrame` 在查看模式下实时预览（切分/编辑/扫描即刷新编辑器并清过滤），取消时恢复打开前的帧表、帧模型与过滤状态，确定时走同一应用路径并记录事件；扫描与确定都同时刷新文档与窗口。`test_ui` +12 断言（128 比特切分后行数=帧数、视图可见重绘、重开回填、取消保留、扫描实时预览、取消回滚、确定保留）；核心 189 / UI 452；`GOLDEN OK`。
 
+47. 同类问题巡检：帧过滤「确定后失效」与「不等长帧下过滤无变化」（承 46 的缺陷类别，逐个对话框排查回填/刷新）：排查中「视图未刷新」一类不成立——`MainWindow::UpdateAllViews()` 已遍历所有文档的全部 Tab，`BesDoc::UpdateAllViews()` 只是冗余；确定发现两处，都在帧过滤上。① `DlgFilter` 从不读回已生效的过滤，条件列表每次打开都是空的，用户「确定」后再打开哪怕只改一个判定，返回的空过滤都会把 `st.filter/filterActive/visibleFrames` 清零——表现为「过滤点了确定就没了」。现构造接收 `const FrameFilter*`，回填条件到列表（文案与「添加」共用 `DescribeCondition()`）、`LoadRow(0)` 恢复该行、置 `m_needRun`，再次确定保持条件并重算命中；回填必须在 `OnDataTypeChanged()` 之后，否则判定下拉被复位。② 不等长帧生效时过滤按等长帧扫描（`start + i*frameLen`），得到的帧号与帧表下标不符，「应用」后画面不变。现 `SearchEngine` 增加 `VariableFrameSet` 重载，与等长版共用 `FrameMatches()`（帧长条件比较每帧自身长度、数值条件按帧起点、CRC 与帧尾 2 字节对拍），`DlgFilter` 接收 `const VariableFrameSet*` 并在不等长时走该重载，`Renderer` 新增 `FrameOfRow()` 让 `Compute/Layout/HitTest/YAxisText/RowStartBit/FrameLenOfRow` 的不等长分支统一按可见帧列表映射（此前仅因 `row == frameIdx` 才看起来正确），`MainWindow::DoFilter` 跳转首帧改用帧表 `startBit`。其余对话框（`DlgParamSet`/`DlgSearchFl`/`DlgPosition`/`DlgPrint`/`DlgOutputSet`/`DlgGroupItems`/`DlgSearchUnique`/`DlgComponent`/`DlgComSelect`/`DlgProcess`/`DlgCustomize`/`DlgAbout`）都已正确回填或本就无状态，未改动。`test_core` +7、`test_ui` +4；核心 196 / UI 456；`GOLDEN OK`。
+
+
 ## 7. 仍未对齐的差异（已确认，不属于未对比）
 
 | 差异 | 影响 | 处理建议 |
@@ -202,8 +205,8 @@
 
 ```bat
 run-tests.bat
-=> 核心 189 断言 ALL PASSED
-=> UI  452 断言 UI ALL PASSED
+=> 核心 196 断言 ALL PASSED
+=> UI  456 断言 UI ALL PASSED
 
 tools\golden.bat
 => GOLDEN OK

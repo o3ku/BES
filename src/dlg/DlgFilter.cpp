@@ -96,10 +96,30 @@ QString FormatValueText(int bits, uint64_t value)
     return groups.join(QLatin1Char(' '));
 }
 
+// 条件列表一行的显示文本（添加/更改与重开回填共用，保证两处文案一致）
+QString DescribeCondition(const FilterCondition& c)
+{
+    switch (c.kind) {
+    case FilterKind::FrameLength:
+        return QStringLiteral("帧长%1%2比特").arg(OpSymbol(c.frameOp))
+                   .arg(c.frameBits);
+    case FilterKind::Value:
+        return QStringLiteral("%1开始的%2%3%4")
+                   .arg(c.valuePos)
+                   .arg(TypeName(c.valueBits))
+                   .arg(OpSymbol(c.valueOp))
+                   .arg(QStringLiteral("0X") + QString::number(c.value, 16).toUpper());
+    default:
+        return c.crcPass ? QStringLiteral("CRC校验通过")
+                         : QStringLiteral("CRC校验失败");
+    }
+}
+
 } // namespace
 
-DlgFilter::DlgFilter(QWidget* parent, const FileMap& map, const FrameModel& fm)
-    : QDialog(parent), m_map(&map), m_frame(fm)
+DlgFilter::DlgFilter(QWidget* parent, const FileMap& map, const FrameModel& fm,
+                     const FrameFilter* existing, const VariableFrameSet* vframes)
+    : QDialog(parent), m_map(&map), m_frame(fm), m_vframes(vframes)
 {
     setWindowTitle(QStringLiteral("帧过滤"));
     resize(440, 320);
@@ -262,6 +282,22 @@ DlgFilter::DlgFilter(QWidget* parent, const FileMap& map, const FrameModel& fm)
         m_frameEdit->setText(QStringLiteral("32"));
 
     OnDataTypeChanged();
+
+    // 回填已生效的过滤条件：否则重开点「确定」会把上次的条件清掉
+    if (existing && !existing->conditions.empty()) {
+        m_conds = existing->conditions;
+        m_filter = *existing;
+        {
+            const QSignalBlocker blocker(m_list);
+            for (const FilterCondition& c : m_conds)
+                m_list->addItem(DescribeCondition(c));
+        }
+        if (m_list->count() > 0)
+            m_list->setCurrentRow(0);
+        LoadRow(0);
+        m_needRun = true;
+    }
+
     SyncButtons();
 }
 
@@ -471,13 +507,22 @@ bool DlgFilter::RunFilter()
     QApplication::setOverrideCursor(Qt::WaitCursor);
     SearchEngine eng;
     std::atomic<bool> stop{false};
-    const bool ok = eng.ApplyFilter(*m_map, m_frame, m_filter, m_matched,
-        [this](uint64_t done, uint64_t total, bool finished) {
-            if (finished || total == 0)
-                return;
-            m_status->setText(QStringLiteral("已完成：%1%").arg(done * 100 / total));
-            QApplication::processEvents();
-        }, stop);
+    const bool variable = m_frame.bVariable && m_vframes && m_vframes->Size() > 0;
+    const bool ok = variable
+        ? eng.ApplyFilter(*m_map, *m_vframes, m_filter, m_matched,
+            [this](uint64_t done, uint64_t total, bool finished) {
+                if (finished || total == 0)
+                    return;
+                m_status->setText(QStringLiteral("已完成：%1%").arg(done * 100 / total));
+                QApplication::processEvents();
+            }, stop)
+        : eng.ApplyFilter(*m_map, m_frame, m_filter, m_matched,
+            [this](uint64_t done, uint64_t total, bool finished) {
+                if (finished || total == 0)
+                    return;
+                m_status->setText(QStringLiteral("已完成：%1%").arg(done * 100 / total));
+                QApplication::processEvents();
+            }, stop);
     QApplication::restoreOverrideCursor();
 
     if (!ok) {

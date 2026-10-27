@@ -1821,11 +1821,14 @@ void MainWindow::DoFilter()
 {
     BesDoc* d = ActiveDoc();
     if (!d) return;
+    DocState& st = d->State();
     FrameModel fm = d->State().frame;
     BesView* v = ActiveView();
     if (fm.frameLen == 0 && v) fm.frameLen = v->FrameLenBits();
 
-    DlgFilter dlg(this, d->Map(), fm);
+    DlgFilter dlg(this, d->Map(), fm,
+                  st.filterActive && !st.filter.conditions.empty() ? &st.filter : nullptr,
+                  st.frame.bVariable ? &st.varFrames : nullptr);
 
     bool applied = false;
     auto applyResult = [this, d, &dlg, v, fm, &applied]() {
@@ -1841,7 +1844,10 @@ void MainWindow::DoFilter()
         }
 
         if (!dlg.Matched().empty() && v) {
-            const uint64_t bit = st.frame.startBit + dlg.Matched().front() * fm.frameLen;
+            const uint64_t first = dlg.Matched().front();
+            const uint64_t bit = st.frame.bVariable && first < st.varFrames.Size()
+                ? st.varFrames.Frames()[static_cast<size_t>(first)].startBit
+                : st.frame.startBit + first * fm.frameLen;
             d->SetCursorBit(bit);
             v->SyncToBit(bit);
             if (m_eventPane)
@@ -1849,9 +1855,10 @@ void MainWindow::DoFilter()
                                         QTime::currentTime().toString(QStringLiteral("hh:mm:ss")),
                                         QStringLiteral("匹配 %1 帧，已跳至第 %2 帧")
                                             .arg(static_cast<qulonglong>(dlg.Matched().size()))
-                                            .arg(static_cast<qulonglong>(dlg.Matched().front())) });
+                                            .arg(static_cast<qulonglong>(first)) });
         }
         applied = true;
+        d->UpdateAllViews();
         UpdateAllViews();
     };
     // 原版“应用”不关闭对话框，立即作用于主视图
